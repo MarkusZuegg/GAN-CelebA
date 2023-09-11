@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, random_split
 from torchvision.datasets import MNIST
 from pytorch_lightning.loggers import CSVLogger, CometLogger
 
-BATCH_SIZE = 128
+BATCH_SIZE = 10
 
 class MNISTDataModule(LightningDataModule):
     def __init__(self, batch_size = BATCH_SIZE):
@@ -28,6 +28,8 @@ class MNISTDataModule(LightningDataModule):
         # download
         MNIST(root='./MNIST_data', train=True, download=True)
         MNIST(root='./MNIST_data', train=False, download=True)
+
+        print('Data loaded')
 
     def setup(self, stage=None):
         # Assign train/val datasets for use in dataloaders
@@ -105,7 +107,7 @@ class GAN(LightningModule):
         **kwargs,):
         super().__init__()
         self.save_hyperparameters()
-        self.automatic_optimization = True
+        self.automatic_optimization = False
 
         # networks
         data_shape = (channels, width, height)
@@ -122,63 +124,82 @@ class GAN(LightningModule):
     def adversarial_loss(self, y_hat, y):
         return F.binary_cross_entropy(y_hat, y)
 
-    def training_step(self, batch, batch_idx, optimizer_idx):
+    def training_step(self, batch, batch_idx):
+        g_opt, d_opt = self.optimizers()
+
         imgs, _ = batch
 
         # sample noise
         z = torch.randn(imgs.shape[0], self.hparams.latent_dim)
         z = z.type_as(imgs)
 
-        # train generator
-        if optimizer_idx == 0:
+        ###################
+        # train generator #
+        ###################
 
-            # generate images
-            self.generated_imgs = self(z)
+        # if optimizer_idx == 0:
 
-            # log sampled images
-            sample_imgs = self.generated_imgs[:6]
-            grid = torchvision.utils.make_grid(sample_imgs)
-            self.logger.experiment.add_image("generated_images", grid, 0)
+        # generate images
+        self.generated_imgs = self(z)
 
-            # ground truth result (ie: all fake)
-            # put on GPU because we created this tensor inside training_loop
-            valid = torch.ones(imgs.size(0), 1)
-            valid = valid.type_as(imgs)
+        # log sampled images
+        sample_imgs = self.generated_imgs[:6]
+        grid = torchvision.utils.make_grid(sample_imgs)
+        self.logger.experiment.add_image("generated_images", grid, 0)
 
-            # adversarial loss is binary cross-entropy
-            g_loss = self.adversarial_loss(self.discriminator(self(z)), valid)
-            self.log("g_loss", g_loss, prog_bar=True)
-            return g_loss
+        # ground truth result (ie: all fake)
+        # put on GPU because we created this tensor inside training_loop
+        valid = torch.ones(imgs.size(0), 1)
+        valid = valid.type_as(imgs)
 
-        # train discriminator
-        if optimizer_idx == 1:
-            # Measure discriminator's ability to classify real from generated samples
+        # adversarial loss is binary cross-entropy
+        g_loss = self.adversarial_loss(self.discriminator(self(z)), valid)
+        self.log("g_loss", g_loss, prog_bar=True)
 
-            # how well can it label as real?
-            valid = torch.ones(imgs.size(0), 1)
-            valid = valid.type_as(imgs)
+        g_opt.zero_grad()
+        self.manual_backward(g_loss)
+        g_opt.step()
+        # return g_loss
 
-            real_loss = self.adversarial_loss(self.discriminator(imgs), valid)
+    #######################
+    # train discriminator #
+    #######################
 
-            # how well can it label as fake?
-            fake = torch.zeros(imgs.size(0), 1)
-            fake = fake.type_as(imgs)
+    # if optimizer_idx == 1:
 
-            fake_loss = self.adversarial_loss(self.discriminator(self(z).detach()), fake)
+        # Measure discriminator's ability to classify real from generated samples
+        # how well can it label as real?
+        valid = torch.ones(imgs.size(0), 1)
+        valid = valid.type_as(imgs)
 
-            # discriminator loss is the average of these
-            d_loss = (real_loss + fake_loss) / 2
-            self.log("d_loss", d_loss, prog_bar=True)
-            return d_loss
+        real_loss = self.adversarial_loss(self.discriminator(imgs), valid)
+
+        # how well can it label as fake?
+        fake = torch.zeros(imgs.size(0), 1)
+        fake = fake.type_as(imgs)
+
+        fake_loss = self.adversarial_loss(self.discriminator(self(z).detach()), fake)
+
+        # discriminator loss is the average of these
+        d_loss = (real_loss + fake_loss) / 2
+        self.log("d_loss", d_loss, prog_bar=True)
+
+        d_opt.zero_grad()
+        self.manual_backward(d_loss)
+        d_opt.step()
+
+        # return d_loss
+        self.log_dict({"g_loss": g_loss, "d_loss": d_loss}, prog_bar=True)
 
     def configure_optimizers(self):
         lr = self.hparams.lr
         b1 = self.hparams.b1
         b2 = self.hparams.b2
 
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(b1, b2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
-        return [opt_g, opt_d], []
+        g_opt = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(b1, b2))
+        d_opt = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
+        # return [opt_g, opt_d], []
+        return g_opt, d_opt
 
     def validation_step(self,batch,batch_idx):
         z = self.validation_z.type_as(self.generator.model[0].weight)
@@ -189,7 +210,7 @@ class GAN(LightningModule):
         self.logger.experiment.add_image("generated_images", grid, self.current_epoch)
     
 def main():
-    max_epochs = 10
+    max_epochs = 1
 
     data = MNISTDataModule()
     model = GAN(*data.dims)
