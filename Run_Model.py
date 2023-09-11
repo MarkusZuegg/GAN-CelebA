@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, random_split
 from torchvision.datasets import MNIST
 from pytorch_lightning.loggers import CSVLogger, CometLogger
 
-BATCH_SIZE = 128
+BATCH_SIZE = 244
 
 class MNISTDataModule(LightningDataModule):
     def __init__(self, batch_size = BATCH_SIZE):
@@ -210,7 +210,7 @@ class GAN(LightningModule):
         self.logger.experiment.add_image("generated_images", grid, self.current_epoch)
     
 def main():
-    max_epochs = 15
+    max_epochs = 40
 
     data = MNISTDataModule()
     model = GAN(*data.dims)
