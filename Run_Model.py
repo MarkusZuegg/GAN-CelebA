@@ -105,6 +105,7 @@ class GAN(LightningModule):
         **kwargs,):
         super().__init__()
         self.save_hyperparameters()
+        self.automatic_optimization = False
 
         # networks
         data_shape = (channels, width, height)
@@ -188,7 +189,7 @@ class GAN(LightningModule):
         self.logger.experiment.add_image("generated_images", grid, self.current_epoch)
     
 def main():
-    max_epochs = 20
+    max_epochs = 10
 
     data = MNISTDataModule()
     model = GAN(*data.dims)
