@@ -3,103 +3,127 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+import torchmetrics
 import torchvision.transforms as transforms
+import pytorch_lightning as pl
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.callbacks.progress import TQDMProgressBar
 from torch.utils.data import DataLoader, random_split
-from torchvision.datasets import MNIST
-from pytorch_lightning.loggers import CSVLogger, CometLogger
+from torchvision.datasets import MNIST, CelebA
+from torchvision.transforms import Compose, ToTensor, Resize, Normalize, CenterCrop
+import pandas as pd
+import seaborn as sn
 
-BATCH_SIZE = 244
 
-class MNISTDataModule(LightningDataModule):
-    def __init__(self, batch_size = BATCH_SIZE):
-        super().__init__()
-        self.batch_size = batch_size
+# Batch size during training
+BATCH_SIZE = 128
 
-        self.transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.1307,), (0.3081,)),])
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
 
-        self.dims = (1, 28, 28)
-        self.num_classes = 10
+def get_noise(cur_batch_size, z_dim):
+    noise = torch.randn(cur_batch_size, z_dim, 1, 1)
+    return noise
 
-    def prepare_data(self):
-        # download
-        MNIST(root='./MNIST_data', train=True, download=True)
-        MNIST(root='./MNIST_data', train=False, download=True)
-
-        print('Data loaded')
-
-    def setup(self, stage=None):
-        # Assign train/val datasets for use in dataloaders
-        if stage == "fit" or stage is None:
-            mnist_full = MNIST(root='./MNIST_data', train=True, transform=self.transform)
-            self.mnist_train, self.mnist_val = random_split(mnist_full, [55000, 5000])
-
-        # Assign test dataset for use in dataloader(s)
-        if stage == "test" or stage is None:
-            self.mnist_test = MNIST(root='./MNIST_data', train=False, transform=self.transform)
-
-    def train_dataloader(self):
-        return DataLoader(self.mnist_train, batch_size=self.batch_size,)
-
-    def val_dataloader(self):
-        return DataLoader(self.mnist_val, batch_size=self.batch_size,)
-
-    def test_dataloader(self):
-        return DataLoader(self.mnist_test, batch_size=self.batch_size,)
-    
 class Generator(nn.Module):
-    def __init__(self, latent_dim, img_shape):
-        super().__init__()
-        self.img_shape = img_shape
+    def __init__(self, in_channels=3, z_dim=100):
+        super(Generator, self).__init__()
 
-        def block(in_feat, out_feat, normalize=True):
-            layers = [nn.Linear(in_feat, out_feat)]
-            if normalize:
-                layers.append(nn.BatchNorm1d(out_feat, 0.8))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
+        self.gen = nn.Sequential(
+            self.create_upblock(z_dim,
+                                1024,
+                                kernel_size=4,
+                                stride=1,
+                                padding=0),
+            self.create_upblock(1024, 512, kernel_size=4, stride=2, padding=1),
+            self.create_upblock(512, 256, kernel_size=4, stride=2, padding=1),
+            self.create_upblock(256, 128, kernel_size=4, stride=2, padding=1),
+            self.create_upblock(128,
+                                3,
+                                kernel_size=4,
+                                stride=2,
+                                padding=1,
+                                final_layer=True),
+        )
 
-        self.model = nn.Sequential(
-            *block(latent_dim, 128, normalize=False),
-            *block(128, 256),
-            *block(256, 512),
-            *block(512, 1024),
-            nn.Linear(1024, int(np.prod(img_shape))),
-            nn.Tanh(),)
+    def create_upblock(self,
+                       in_channels,
+                       out_channels,
+                       kernel_size=5,
+                       stride=2,
+                       padding=1,
+                       final_layer=False):
+        if final_layer:
+            return nn.Sequential(
+                nn.ConvTranspose2d(in_channels,
+                                   out_channels,
+                                   kernel_size,
+                                   stride,
+                                   padding,
+                                   bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.Tanh()
+                )
+        return nn.Sequential(
+            nn.ConvTranspose2d(in_channels,
+                               out_channels,
+                               kernel_size,
+                               stride,
+                               padding,
+                               bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(True))
 
-    def forward(self, z):
-        img = self.model(z)
-        img = img.view(img.size(0), *self.img_shape)
-        return img
-    
+    def forward(self, noise):
+        """
+        noise: random vector of shape=(N, 100, 1, 1)
+        """
+        assert len(noise.shape) == 4, 'random vector of shape=(N, 100, 1, 1)'
+
+        return self.gen(noise)
+     
 class Discriminator(nn.Module):
-    def __init__(self, img_shape):
-        super().__init__()
+    def __init__(self, in_channels=3, hidden_dim=32):
+        super(Discriminator, self).__init__()
+        self.disc = nn.Sequential(
+            self.make_disc_block(in_channels, hidden_dim),
+            self.make_disc_block(hidden_dim, hidden_dim * 2),
+            self.make_disc_block(hidden_dim * 2, hidden_dim * 4, stride=1),
+            self.make_disc_block(hidden_dim * 4, hidden_dim * 4, stride=2),
+            self.make_disc_block(hidden_dim * 4, 1, final_layer=True),
+        )
 
-        self.model = nn.Sequential(
-            nn.Linear(int(np.prod(img_shape)), 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 1),
-            nn.Sigmoid(),)
+    def make_disc_block(self,
+                        input_channels,
+                        output_channels,
+                        kernel_size=4,
+                        stride=2,
+                        final_layer=False):
+        if not final_layer:
+            return nn.Sequential(
+                nn.Conv2d(input_channels, output_channels, kernel_size,
+                          stride), nn.BatchNorm2d(output_channels),
+                nn.LeakyReLU(0.2))
+        else:
+            return nn.Sequential(
+                nn.Conv2d(input_channels, output_channels, kernel_size,
+                          stride))
 
-    def forward(self, img):
-        img_flat = img.view(img.size(0), -1)
-        validity = self.model(img_flat)
-
-        return validity
-
+    def forward(self, image):
+        disc_pred = self.disc(image)
+        return disc_pred.view(len(disc_pred), -1)
+    
 class GAN(LightningModule):
     def __init__(
         self,
-        channels,
-        width,
-        height,
+        in_channels: int = 3,
         latent_dim: int = 100,
+        hidden_dim: int = 32,
         lr: float = 0.0002,
         b1: float = 0.5,
         b2: float = 0.999,
@@ -108,87 +132,87 @@ class GAN(LightningModule):
         super().__init__()
         self.save_hyperparameters()
         self.automatic_optimization = False
+        self.latent_dim = latent_dim
 
         # networks
-        data_shape = (channels, width, height)
-        self.generator = Generator(latent_dim=self.hparams.latent_dim, img_shape=data_shape)
-        self.discriminator = Discriminator(img_shape=data_shape)
+        self.generator = Generator(in_channels, z_dim=latent_dim)
+        self.discriminator = Discriminator(in_channels=in_channels, hidden_dim=hidden_dim)
 
-        self.validation_z = torch.randn(8, self.hparams.latent_dim)
-
-        self.example_input_array = torch.zeros(2, self.hparams.latent_dim)
+        #apply weights
+        self.generator.apply(weights_init)
+        self.discriminator.apply(weights_init)
 
     def forward(self, z):
         return self.generator(z)
 
     def adversarial_loss(self, y_hat, y):
-        return F.binary_cross_entropy(y_hat, y)
+        return F.binary_cross_entropy_with_logits(y_hat, y)
+    
+    def generator_step(self, x, noise):
+        # generate fake images
+        fake_images = self.generator(noise)
+
+        fake_logits = self.discriminator(fake_images)
+        fake_loss = self.adversarial_loss(fake_logits, torch.ones_like(fake_logits))
+
+        gen_loss = fake_loss
+
+        self.log('gen_loss', gen_loss, on_epoch=True, prog_bar=True)
+        return gen_loss
+    
+    def discriminator_step(self, x, noise):
+        """
+        x: real image
+        """
+        fake_images = self.generator(noise)
+        # get discriminator outputs
+        real_logits = self.discriminator(x)
+        fake_logits = self.discriminator(fake_images.detach())
+
+        # real loss
+        real_loss = self.adversarial_loss(real_logits, torch.ones_like(real_logits))
+        # fake loss
+        fake_loss = self.adversarial_loss(fake_logits, torch.zeros_like(fake_logits))
+        disc_loss = (fake_loss + real_loss) / 2
+
+        self.log('disc_loss', disc_loss, on_epoch=True, prog_bar=True)
+        return disc_loss
 
     def training_step(self, batch, batch_idx):
+        #get optimizers
         g_opt, d_opt = self.optimizers()
 
         imgs, _ = batch
+        real = imgs
 
         # sample noise
-        z = torch.randn(imgs.shape[0], self.hparams.latent_dim)
-        z = z.type_as(imgs)
-
-        ###################
-        # train generator #
-        ###################
-
-        # if optimizer_idx == 0:
+        noise = get_noise(real.shape[0], self.latent_dim)
 
         # generate images
-        self.generated_imgs = self(z)
+        self.generated_imgs = self(noise)
 
         # log sampled images
         sample_imgs = self.generated_imgs[:6]
         grid = torchvision.utils.make_grid(sample_imgs)
         self.logger.experiment.add_image("generated_images", grid, 0)
 
-        # ground truth result (ie: all fake)
-        # put on GPU because we created this tensor inside training_loop
-        valid = torch.ones(imgs.size(0), 1)
-        valid = valid.type_as(imgs)
+        #get generator loss
+        g_loss = self.generator_step(real, noise)
 
-        # adversarial loss is binary cross-entropy
-        g_loss = self.adversarial_loss(self.discriminator(self(z)), valid)
-        self.log("g_loss", g_loss, prog_bar=True)
-
+        #Manually step the generator optimizer
         g_opt.zero_grad()
         self.manual_backward(g_loss)
         g_opt.step()
-        # return g_loss
 
-    #######################
-    # train discriminator #
-    #######################
+        #get discriminator loss
+        d_loss = self.discriminator_step(real, noise)
 
-    # if optimizer_idx == 1:
-
-        # Measure discriminator's ability to classify real from generated samples
-        # how well can it label as real?
-        valid = torch.ones(imgs.size(0), 1)
-        valid = valid.type_as(imgs)
-
-        real_loss = self.adversarial_loss(self.discriminator(imgs), valid)
-
-        # how well can it label as fake?
-        fake = torch.zeros(imgs.size(0), 1)
-        fake = fake.type_as(imgs)
-
-        fake_loss = self.adversarial_loss(self.discriminator(self(z).detach()), fake)
-
-        # discriminator loss is the average of these
-        d_loss = (real_loss + fake_loss) / 2
-        self.log("d_loss", d_loss, prog_bar=True)
-
+        #Manually step discriminator optimizer
         d_opt.zero_grad()
         self.manual_backward(d_loss)
         d_opt.step()
 
-        # return d_loss
+        #return generator and discriminator loss into dict
         self.log_dict({"g_loss": g_loss, "d_loss": d_loss}, prog_bar=True)
 
     def configure_optimizers(self):
@@ -198,31 +222,61 @@ class GAN(LightningModule):
 
         g_opt = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(b1, b2))
         d_opt = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
-        # return [opt_g, opt_d], []
         return g_opt, d_opt
 
     def validation_step(self,batch,batch_idx):
-        z = self.validation_z.type_as(self.generator.model[0].weight)
+        imgs, _ = batch
+        noise = get_noise(imgs.shape[0], self.latent_dim)
 
         # log sampled images
-        sample_imgs = self(z)
+        sample_imgs = self(noise)
         grid = torchvision.utils.make_grid(sample_imgs)
         self.logger.experiment.add_image("generated_images", grid, self.current_epoch)
     
-def main():
-    max_epochs = 100
+class CelebADataModule(LightningDataModule):
+    def __init__(
+        self, 
+        batch_size = BATCH_SIZE,
+        image_size = 64,
+        in_channels = 3):
+        super().__init__()
+        self.batch_size = batch_size
+        self.transform = Compose([
+            Resize(image_size),
+            CenterCrop(image_size),
+            ToTensor(),
+            Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),])
+        self.dims = (in_channels, image_size, image_size)
 
-    data = MNISTDataModule()
-    model = GAN(*data.dims)
+        #load data
+        self.dataset = torchvision.datasets.ImageFolder(root='./CelebA_data/celeba/', transform=self.transform)
+
+        #split data
+        lengths = [170000, 30000, 2599]
+        self.train, self.val, self.test = random_split(dataset=self.dataset, lengths=lengths)
+
+        print('Data loaded')
+
+
+    def train_dataloader(self):
+        return DataLoader(self.train, batch_size=self.batch_size, shuffle=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.val, batch_size=self.batch_size)
+
+    def test_dataloader(self):
+        return DataLoader(self.test, batch_size=self.batch_size)
+    
+def main():
+    max_epochs = 10
+
+    data = CelebADataModule()
+    model = GAN()
     trainer = Trainer(
         accelerator="auto",
         devices=1 if torch.cuda.is_available() else None,  # limiting got iPython runs
         max_epochs=max_epochs,
         callbacks=[TQDMProgressBar(refresh_rate=20)],)
     trainer.fit(model, data)
-
-    # Start tensorboard.
-    # %load_ext tensorboard
-    # %tensorboard --logdir=lightning_logs/
 
 if __name__ == '__main__': main()
