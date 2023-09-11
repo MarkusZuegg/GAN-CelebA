@@ -210,7 +210,7 @@ class GAN(LightningModule):
         self.logger.experiment.add_image("generated_images", grid, self.current_epoch)
     
 def main():
-    max_epochs = 40
+    max_epochs = 100
 
     data = MNISTDataModule()
     model = GAN(*data.dims)
