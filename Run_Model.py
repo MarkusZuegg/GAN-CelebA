@@ -260,7 +260,7 @@ class CelebADataModule(LightningDataModule):
         in_channels = 3):
         super().__init__()
         self.batch_size = batch_size
-        self.num_works = 4
+        self.num_works = 1
         self.transform = Compose([
             Resize(image_size),
             CenterCrop(image_size),
@@ -288,7 +288,7 @@ class CelebADataModule(LightningDataModule):
         return DataLoader(self.test, batch_size=self.batch_size, num_workers=self.num_works)
     
 def main():
-    max_epochs = 30
+    max_epochs = 35
 
     data = CelebADataModule()
     model = GAN()
