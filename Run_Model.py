@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Batch size during training
-BATCH_SIZE = 128
+BATCH_SIZE = 244
 
 def show_tensor_images(image_tensor,
                        num_images=25,
