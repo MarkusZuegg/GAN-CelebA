@@ -243,14 +243,14 @@ class GAN(LightningModule):
         d_opt = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
         return g_opt, d_opt
 
-    def validation_step(self,batch,batch_idx):
-        imgs, _ = batch
-        noise = get_noise(imgs.shape[0], self.latent_dim)
+    # def validation_step(self,batch,batch_idx):
+    #     imgs, _ = batch
+    #     noise = get_noise(imgs.shape[0], self.latent_dim)
 
-        # log sampled images
-        sample_imgs = self.generator(noise)
-        grid = torchvision.utils.make_grid(sample_imgs)
-        self.logger.experiment.add_image("generated_images", grid, self.current_epoch)
+    #     # log sampled images
+    #     sample_imgs = self.generator(noise)
+    #     grid = torchvision.utils.make_grid(sample_imgs)
+    #     self.logger.experiment.add_image("generated_images", grid, self.current_epoch)
     
 class CelebADataModule(LightningDataModule):
     def __init__(
