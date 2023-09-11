@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Batch size during training
-BATCH_SIZE = 244
+BATCH_SIZE = 356
 
 def show_tensor_images(image_tensor,
                        num_images=25,
@@ -260,7 +260,7 @@ class CelebADataModule(LightningDataModule):
         in_channels = 3):
         super().__init__()
         self.batch_size = batch_size
-        self.num_works = 4
+        self.num_works = 8
         self.transform = Compose([
             Resize(image_size),
             CenterCrop(image_size),
