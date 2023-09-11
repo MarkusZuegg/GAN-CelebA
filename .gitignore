@@ -3,3 +3,4 @@ lightning_logs/
 CIFAR10_data/
 CelebA_data/
 celeba/
+MNIST_data/
