@@ -268,7 +268,7 @@ class CelebADataModule(LightningDataModule):
         return DataLoader(self.test, batch_size=self.batch_size)
     
 def main():
-    max_epochs = 10
+    max_epochs = 1
 
     data = CelebADataModule()
     model = GAN()
