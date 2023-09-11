@@ -9,14 +9,33 @@ import pytorch_lightning as pl
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.callbacks.progress import TQDMProgressBar
 from torch.utils.data import DataLoader, random_split
+from torchvision.utils import make_grid
 from torchvision.datasets import MNIST, CelebA
 from torchvision.transforms import Compose, ToTensor, Resize, Normalize, CenterCrop
 import pandas as pd
 import seaborn as sn
+import matplotlib.pyplot as plt
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Batch size during training
 BATCH_SIZE = 128
+
+def show_tensor_images(image_tensor,
+                       num_images=25,
+                       size=(3, 64, 64),
+                       ret=False):
+    '''
+    Function for visualizing images: Given a tensor of images, number of images, and
+    size per image, plots and prints the images in an uniform grid.
+    '''
+    image_tensor = (image_tensor + 1) / 2
+    image_unflat = image_tensor.detach().cpu()
+    image_grid = make_grid(image_unflat[:num_images], nrow=5)
+    if ret:
+        return image_grid.permute(1, 2, 0).squeeze()
+    image = plt.imshow(image_grid.permute(1, 2, 0).squeeze())
+    plt.imsave('images.png', image)
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -27,7 +46,7 @@ def weights_init(m):
         nn.init.constant_(m.bias.data, 0)
 
 def get_noise(cur_batch_size, z_dim):
-    noise = torch.randn(cur_batch_size, z_dim, 1, 1)
+    noise = torch.randn(cur_batch_size, z_dim, 1, 1, device=device)
     return noise
 
 class Generator(nn.Module):
