@@ -22,7 +22,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Batch size during training
 BATCH_SIZE = 128
 
-def show_tensor_images(root, image_tensor, num_images=25, size=(3, 64, 64), ret=False):
+def show_tensor_images(image_tensor, num_images=25, size=(3, 64, 64), ret=False):
     '''
     Function for visualizing images: Given a tensor of images, number of images, and
     size per image, plots and prints the images in an uniform grid.
@@ -32,8 +32,8 @@ def show_tensor_images(root, image_tensor, num_images=25, size=(3, 64, 64), ret=
     image_grid = make_grid(image_unflat[:num_images], nrow=5)
     if ret:
         return image_grid.permute(1, 2, 0).squeeze()
-    image = plt.imshow(image_grid.permute(1, 2, 0).squeeze())
-    plt.imsave('images.png', image, fname=root)
+    plt.imshow(image_grid.permute(1, 2, 0).squeeze())
+    plt.savefig('./Lightning_logs/faces.png')
 
 def weights_init(m):
     """Initilises weights for networks
@@ -60,13 +60,13 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
 
         self.gen = nn.Sequential(
-            self.create_upblock(z_dim, 1024, kernel_size=4, stride=1, padding=0),
-            self.create_upblock(1024, 512, kernel_size=4, stride=2, padding=1),
-            self.create_upblock(512, 256, kernel_size=4, stride=2, padding=1),
-            self.create_upblock(256, 128, kernel_size=4, stride=2, padding=1),
-            self.create_upblock(128, 3, kernel_size=4, stride=2, padding=1, final_layer=True),)
+            self.create_block(z_dim, 1024, kernel_size=4, stride=1, padding=0),
+            self.create_block(1024, 512, kernel_size=4, stride=2, padding=1),
+            self.create_block(512, 256, kernel_size=4, stride=2, padding=1),
+            self.create_block(256, 128, kernel_size=4, stride=2, padding=1),
+            self.create_block(128, 3, kernel_size=4, stride=2, padding=1, final_layer=True),)
 
-    def create_upblock(self, in_channels, out_channels, kernel_size=5, 
+    def create_block(self, in_channels, out_channels, kernel_size=5, 
                        stride=2, padding=1, final_layer=False):
         """Creates a layer of Convtransposed2d neural nets"""
         if final_layer:
@@ -196,7 +196,7 @@ class GAN(LightningModule):
         self.logger.experiment.add_image("generated_images", grid, 0)
 
         if batch_idx % 500 == 0:
-            show_tensor_images(root=self.trainer.log_dir, image_tensor=self.generated_imgs,)
+            show_tensor_images(image_tensor=self.generated_imgs,)
 
         #get generator loss
         g_loss = self.generator_step(real, noise)
@@ -244,7 +244,7 @@ class CelebADataModule(LightningDataModule):
         in_channels = 3):
         super().__init__()
         self.batch_size = batch_size
-        self.num_works = 4
+        self.num_works = 1
 
         #transform for CelebA dataset
         self.transform = Compose([
