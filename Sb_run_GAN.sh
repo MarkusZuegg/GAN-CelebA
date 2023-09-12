@@ -17,4 +17,4 @@
 module load cuda
 conda activate pytorch2
 
-srun python Run_Model.py
+srun python GAN_CelebA_working.py
