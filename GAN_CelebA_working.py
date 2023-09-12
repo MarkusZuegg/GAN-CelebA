@@ -33,7 +33,7 @@ def show_tensor_images(image_tensor, num_images=25, size=(3, 64, 64), ret=False)
     if ret:
         return image_grid.permute(1, 2, 0).squeeze()
     plt.imshow(image_grid.permute(1, 2, 0).squeeze())
-    plt.savefig('./Lightning_logs/faces.png')
+    plt.savefig('./lightning_logs/faces.png')
 
 def weights_init(m):
     """Initilises weights for networks
