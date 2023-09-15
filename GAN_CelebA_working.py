@@ -192,7 +192,7 @@ class GAN(LightningModule):
         self.generated_imgs = self.generator(noise)
 
         # log sampled images
-        sample_imgs = self.generated_imgs[:18]
+        sample_imgs = self.generated_imgs[:12]
         grid = torchvision.utils.make_grid(sample_imgs)
         self.logger.experiment.add_image("generated_images", grid, 0)
 
